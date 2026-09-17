@@ -1,21 +1,21 @@
 # app.py
 
 import os
-import json
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-from prompts import (
-    VULNERABLE_PROMPT,
-    SECURE_PROMPT
-)
+from prompts import VULNERABLE_PROMPT
+
+from mitigation import build_secure_prompt
 
 from attacks import (
     NORMAL_JOB,
     ATTACKS
 )
+
+from evaluator import evaluate_injection
 
 from test_results import save_results
 
@@ -55,7 +55,7 @@ client = genai.Client(
 
 MODEL_NAME = os.getenv(
     "GEMINI_MODEL",
-    "gemini-3.5-flash-lite"
+    "gemini-3.8-flash"
 )
 
 
@@ -66,11 +66,8 @@ MODEL_NAME = os.getenv(
 def ask_ai(system_prompt, user_input):
 
     response = client.models.generate_content(
-
         model=MODEL_NAME,
-
         contents=user_input,
-
         config=types.GenerateContentConfig(
             system_instruction=system_prompt
         )
@@ -128,11 +125,12 @@ def run_injection_tests():
         print(attack["input"])
 
 
-        # --------------------------------------
+        # ==================================
         # BEFORE MITIGATION
-        # --------------------------------------
+        # ==================================
 
-        print("\n[1] BEFORE MITIGATION")
+        print()
+        print("[1] BEFORE MITIGATION")
 
         vulnerable_response = ask_ai(
             VULNERABLE_PROMPT,
@@ -143,28 +141,53 @@ def run_injection_tests():
         print(vulnerable_response)
 
 
-        # --------------------------------------
+        before_obeyed = evaluate_injection(
+            attack["name"],
+            vulnerable_response
+        )
+
+        print(
+            "\nInjection Obeyed:",
+            before_obeyed
+        )
+
+
+        # ==================================
         # AFTER MITIGATION
-        # --------------------------------------
+        # ==================================
 
-        print("\n[2] AFTER MITIGATION")
+        print()
+        print("[2] AFTER MITIGATION")
 
-        secure_prompt = SECURE_PROMPT.format(
-            user_input=attack["input"]
+        # IMPORTANT:
+        # build_secure_prompt() requires user_input.
+        secure_prompt = build_secure_prompt(
+            attack["input"]
         )
 
         secure_response = ask_ai(
             secure_prompt,
-            ""
+            attack["input"]
         )
 
         print("\nAI Response:")
         print(secure_response)
 
 
-        # --------------------------------------
-        # Store Results
-        # --------------------------------------
+        after_obeyed = evaluate_injection(
+            attack["name"],
+            secure_response
+        )
+
+        print(
+            "\nInjection Obeyed:",
+            after_obeyed
+        )
+
+
+        # ==================================
+        # STORE RESULTS
+        # ==================================
 
         results.append({
 
@@ -172,9 +195,15 @@ def run_injection_tests():
 
             "malicious_input": attack["input"],
 
-            "before_mitigation": vulnerable_response,
+            "before_mitigation": {
+                "response": vulnerable_response,
+                "injection_obeyed": before_obeyed
+            },
 
-            "after_mitigation": secure_response
+            "after_mitigation": {
+                "response": secure_response,
+                "injection_obeyed": after_obeyed
+            }
 
         })
 
@@ -183,7 +212,7 @@ def run_injection_tests():
 
 
 # ==========================================
-# Print Summary
+# Print Final Summary
 # ==========================================
 
 def print_summary(results):
@@ -193,7 +222,10 @@ def print_summary(results):
     print("FINAL SECURITY TEST SUMMARY")
     print("=" * 70)
 
-    for index, result in enumerate(results, start=1):
+    for index, result in enumerate(
+        results,
+        start=1
+    ):
 
         print()
 
@@ -203,15 +235,23 @@ def print_summary(results):
         )
 
         print("\nBefore Mitigation:")
+        print(
+            result["before_mitigation"]["response"]
+        )
 
         print(
-            result["before_mitigation"]
+            "Injection Obeyed:",
+            result["before_mitigation"]["injection_obeyed"]
         )
 
         print("\nAfter Mitigation:")
+        print(
+            result["after_mitigation"]["response"]
+        )
 
         print(
-            result["after_mitigation"]
+            "Injection Obeyed:",
+            result["after_mitigation"]["injection_obeyed"]
         )
 
         print("-" * 70)
@@ -229,19 +269,31 @@ def main():
     print("=" * 70)
 
 
-    # Test normal job listing
+    # --------------------------------------
+    # Normal job test
+    # --------------------------------------
+
     test_normal_job()
 
 
-    # Run injection attacks
+    # --------------------------------------
+    # Injection tests
+    # --------------------------------------
+
     results = run_injection_tests()
 
 
+    # --------------------------------------
     # Save results
+    # --------------------------------------
+
     save_results(results)
 
 
-    # Display summary
+    # --------------------------------------
+    # Print summary
+    # --------------------------------------
+
     print_summary(results)
 
 
@@ -250,6 +302,10 @@ def main():
     print("TESTING COMPLETE")
     print("=" * 70)
 
+
+# ==========================================
+# Start Program
+# ==========================================
 
 if __name__ == "__main__":
     main()
